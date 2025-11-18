@@ -1,9 +1,7 @@
 import os
 from collections import defaultdict
 import ayon_api
-
-
-
+import rv
 from ayon_core.pipeline.load import get_representation_path
 from ayon_openrv.api.pipeline import imprint_container
 
@@ -13,12 +11,6 @@ class OpenRVStackHandler:
     
     @staticmethod
     def create_auto_stack(context):
-
-        try:
-            import rv
-        except ImportError:
-            raise ImportError("Could not import 'rv' module")
-
         """Create AUTO stack in OpenRV for the given context"""
         contexts = context if isinstance(context, list) else [context]
         
