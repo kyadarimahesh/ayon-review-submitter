@@ -1,0 +1,6 @@
+[project]
+name="review_submitter"
+description="Custom Bot Submitter for RV."
+
+[tool.poetry.dependencies]
+six = "^1.15"
