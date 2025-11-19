@@ -1,9 +1,20 @@
 import os
+import re
 from collections import defaultdict
+from pathlib import Path
+
+try:
+    import rv.commands
+except ImportError:
+    rv = None
+
 import ayon_api
-import rv
 from ayon_core.pipeline.load import get_representation_path
-from ayon_openrv.api.pipeline import imprint_container
+
+try:
+    from ayon_openrv.api.pipeline import imprint_container
+except ImportError:
+    imprint_container = None
 
 
 class OpenRVStackHandler:
@@ -12,6 +23,10 @@ class OpenRVStackHandler:
     @staticmethod
     def create_auto_stack(context):
         """Create AUTO stack in OpenRV for the given context"""
+        if rv is None:
+            print("RV module not available")
+            return False
+        
         contexts = context if isinstance(context, list) else [context]
         
         # Group representations by extension
@@ -57,39 +72,63 @@ class OpenRVStackHandler:
                 source_groups = []
                 version_names = []
                 for ctx in contexts:
-                    filepath = get_representation_path(ctx["representation"])
-                    load_path = OpenRVStackHandler._prepare_load_path(filepath)
-                    
-                    # Load using addSourcesVerbose for proper group handling
-                    nodes = rv.commands.addSourcesVerbose([[load_path]])
-                    if nodes:
-                        source_group = rv.commands.nodeGroup(nodes[0])
-                        source_groups.append(source_group)
-                        version_names.append(ctx["version"]["name"])
+                    try:
+                        filepath = get_representation_path(ctx["representation"])
+                        load_path = OpenRVStackHandler._prepare_load_path(filepath)
+                        
+                        # Load using addSourcesVerbose for proper group handling
+                        nodes = rv.commands.addSourcesVerbose([[load_path]])
+                        if nodes:
+                            source_group = rv.commands.nodeGroup(nodes[0])
+                            source_groups.append(source_group)
+                            version_names.append(ctx["version"]["name"])
+                            
+                            # Store version_id in source for later retrieval
+                            OpenRVStackHandler._store_version_metadata(source_group, ctx)
+                            print(f"Loaded {ctx['version']['name']} for stack")
+                        else:
+                            print(f"Warning: Failed to load {filepath}")
+                    except Exception as e:
+                        print(f"Error loading representation: {e}")
+                        continue
                 
                 # Create version comparison name
                 version_comparison = "/".join(version_names)
                 
-                # Create stack
-                stack_node = rv.commands.newNode("RVStackGroup")
-                rv.commands.setNodeInputs(stack_node, source_groups)
-                rv.commands.setStringProperty(f"{stack_node}.ui.name", [f"{ext}_stack({version_comparison})"])
-                stack_nodes.append(stack_node)
-                
-                # Create layout
-                layout_node = rv.commands.newNode("RVLayoutGroup")
-                rv.commands.setNodeInputs(layout_node, source_groups)
-                rv.commands.setStringProperty(f"{layout_node}.layout.mode", ["packed"])
-                rv.commands.setStringProperty(f"{layout_node}.ui.name", [f"{ext}_layout({version_comparison})"])
+                if source_groups:
+                    # Create stack
+                    stack_node = rv.commands.newNode("RVStackGroup")
+                    rv.commands.setNodeInputs(stack_node, source_groups)
+                    rv.commands.setStringProperty(f"{stack_node}.ui.name", [f"{ext}_stack({version_comparison})"])
+                    stack_nodes.append(stack_node)
+                    print(f"Created stack: {ext}_stack({version_comparison})")
+                    
+                    # Create layout
+                    layout_node = rv.commands.newNode("RVLayoutGroup")
+                    rv.commands.setNodeInputs(layout_node, source_groups)
+                    rv.commands.setStringProperty(f"{layout_node}.layout.mode", ["packed"])
+                    rv.commands.setStringProperty(f"{layout_node}.ui.name", [f"{ext}_layout({version_comparison})"]) 
+                    print(f"Created layout: {ext}_layout({version_comparison})")
+                else:
+                    print(f"Warning: No sources loaded for {ext} extension")
             else:
                 # Single representation, just load it
-                OpenRVStackHandler._load_representation(contexts[0])
+                try:
+                    OpenRVStackHandler._load_representation(contexts[0])
+                    print(f"Loaded single representation for {ext}")
+                except Exception as e:
+                    print(f"Error loading single representation: {e}")
         
         # Set view to first stack if any
         if stack_nodes:
-            rv.commands.setViewNode(stack_nodes[0])
-            rv.commands.setFrame(1)
+            try:
+                rv.commands.setViewNode(stack_nodes[0])
+                rv.commands.setFrame(1)
+                print(f"Set view to first stack, total stacks created: {len(stack_nodes)}")
+            except Exception as e:
+                print(f"Warning: Could not set view to stack: {e}")
         
+        print("OpenRV stack creation completed successfully")
         return True
     
     @staticmethod
@@ -103,34 +142,99 @@ class OpenRVStackHandler:
     def _load_representation(context):
         """Load single representation and return node"""
         filepath = get_representation_path(context["representation"])
+        load_path = OpenRVStackHandler._prepare_load_path(filepath)
         
-        ext = os.path.splitext(filepath)[1].lower()
-        if ext in [".mov", ".mp4"]:
-            final_path = filepath
-        else:
-            final_path = rv.commands.sequenceOfFile(filepath)[0]
+        loaded_node = rv.commands.addSourceVerbose([load_path])
         
-        loaded_node = rv.commands.addSourceVerbose([final_path])
+        rep_name = os.path.basename(filepath)
+        namespace = context.get("folder", {}).get("name", "default")
         
-        rep_name = os.path.basename(final_path)
-        namespace = context["folder"]["name"]
+        # Store version_id in source
+        OpenRVStackHandler._store_version_metadata(loaded_node, context)
         
-        imprint_container(
-            loaded_node,
-            name=rep_name,
-            namespace=namespace,
-            context=context,
-            loader="OpenRVStackHandler"
-        )
+        if imprint_container:
+            imprint_container(
+                loaded_node,
+                name=rep_name,
+                namespace=namespace,
+                context=context,
+                loader="OpenRVStackHandler"
+            )
         
         return loaded_node
     
     @staticmethod
+    def read_version_metadata_from_rv():
+        """Read version_id from all sources in current RV session"""
+        if rv is None:
+            return {}
+        
+        source_mapping = {}
+        try:
+            sources = rv.commands.nodesOfType("RVSourceGroup")
+            for source in sources:
+                version_id_prop = f"{source}.ayon.version_id"
+                representation_id_prop = f"{source}.ayon.representation_id"
+                filepath_prop = f"{source}.ayon.file_path"
+                
+                if rv.commands.propertyExists(version_id_prop):
+                    version_id = rv.commands.getStringProperty(version_id_prop)[0]
+                    representation_id = None
+                    filepath = None
+                    
+                    if rv.commands.propertyExists(representation_id_prop):
+                        representation_id = rv.commands.getStringProperty(representation_id_prop)[0]
+                    
+                    if rv.commands.propertyExists(filepath_prop):
+                        filepath = rv.commands.getStringProperty(filepath_prop)[0]
+                    
+                    source_mapping[source] = {
+                        'version_id': version_id,
+                        'representation_id': representation_id,
+                        'path': filepath
+                    }
+                    print(f"Found version metadata in {source}: {version_id}")
+        
+        except Exception as e:
+            print(f"Error reading version metadata: {e}")
+        
+        return source_mapping
+    
+    @staticmethod
+    def _store_version_metadata(node, context):
+        """Store version_id and related metadata in RV source node"""
+        if rv is None:
+            return
+        
+        try:
+            version_id = context.get("version", {}).get("id")
+            representation_id = context.get("representation", {}).get("id")
+            
+            if version_id:
+                prop = f"{node}.ayon.version_id"
+                if not rv.commands.propertyExists(prop):
+                    rv.commands.newProperty(prop, rv.commands.StringType, 1)
+                rv.commands.setStringProperty(prop, [version_id], True)
+            
+            if representation_id:
+                prop = f"{node}.ayon.representation_id"
+                if not rv.commands.propertyExists(prop):
+                    rv.commands.newProperty(prop, rv.commands.StringType, 1)
+                rv.commands.setStringProperty(prop, [representation_id], True)
+            
+            # Store file path
+            filepath = get_representation_path(context["representation"])
+            prop = f"{node}.ayon.file_path"
+            if not rv.commands.propertyExists(prop):
+                rv.commands.newProperty(prop, rv.commands.StringType, 1)
+            rv.commands.setStringProperty(prop, [filepath], True)
+            
+        except Exception as e:
+            print(f"Warning: Could not store version metadata: {e}")
+    
+    @staticmethod
     def _prepare_load_path(path):
         """Prepare path for RV loading (handle sequences)"""
-        import re
-        from pathlib import Path
-        
         ext = Path(path).suffix.lower()
         
         if ext in ['.exr', '.jpg', '.jpeg', '.png', '.tiff', '.dpx']:
