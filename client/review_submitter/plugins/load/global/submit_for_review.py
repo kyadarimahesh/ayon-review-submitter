@@ -1,6 +1,3 @@
-from ayon_core.lib.transcoding import (
-    IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
-)
 from ayon_core.pipeline import load
 from review_submitter.handlers import OpenRVStackHandler, ReviewSubmissionHandler
 
@@ -37,7 +34,7 @@ class SubmitForReview(load.ProductLoaderPlugin):
             bool: True if successful, False otherwise
         """
         from ayon_core.pipeline import registered_host
-        
+
         try:
             host = registered_host()
             tool_name = getattr(host, 'name', 'unknown')
@@ -52,8 +49,8 @@ class SubmitForReview(load.ProductLoaderPlugin):
                 return OpenRVStackHandler.create_auto_stack(context)
             else:
                 print(f"Using standard review handler for {tool_name}")
-                return ReviewSubmissionHandler.submit_for_review(context)
-                
+                # return ReviewSubmissionHandler.submit_for_review(context)
+
         except Exception as e:
             print(f"Error during review submission: {e}")
             import traceback

@@ -237,20 +237,14 @@ class ReviewSubmissionHandler:
                 pass
 
         context = get_current_context()
-        print(f"[DEBUG] Context: {context}")
         task_name = context.get("task_name")
-        print(f"[DEBUG] Task name: {task_name}")
         if task_name:
             folder_path = context.get("folder_path")
-            print(f"[DEBUG] Folder path: {folder_path}")
             folder = get_folder_by_path(project_name, folder_path)
-            print(f"[DEBUG] Folder: {folder}")
             if folder:
                 tasks = list(get_tasks(project_name, folder_ids=[folder["id"]], task_names=[task_name]))
-                print(f"[DEBUG] Tasks: {tasks}")
                 if tasks:
                     task_id = tasks[0]["id"]
-                    print(f"[DEBUG] Task ID: {task_id}")
                     submission_data = {
                         "submission_type": review_data["submission_type"],
                         "reviewer_name": reviewer,
@@ -258,14 +252,10 @@ class ReviewSubmissionHandler:
                         "version_id": version_id,
                         "submitted_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     }
-                    print(f"[DEBUG] Submission data: {submission_data}")
                     task = get_task_by_id(project_name, task_id)
-                    print(f"[DEBUG] Task entity: {task}")
                     task_data = task.get("data", {})
                     task_data["submission_data"] = submission_data
-                    print(f"[DEBUG] Updated task data: {task_data}")
                     update_task(project_name, task_id, data=task_data)
-                    print(f"[DEBUG] Task updated successfully")
 
         QtWidgets.QMessageBox.information(
             None,
