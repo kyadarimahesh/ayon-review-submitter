@@ -79,6 +79,10 @@ class OpenRVStackHandler:
         version_map = {v["id"]: v for v in versions}
 
         for repre in repres:
+            # Skip thumbnail representations
+            if repre.get("name") == "thumbnail":
+                continue
+                
             repre_ctx = ctx.copy()
             repre_ctx["representation"] = repre
             repre_ctx["version"] = version_map.get(repre["versionId"])
@@ -102,9 +106,10 @@ class OpenRVStackHandler:
                 source_groups, version_names = OpenRVStackHandler._load_sources(contexts)
 
                 if source_groups:
+                    product_name = contexts[0]["product"]["name"]
                     version_comparison = "/".join(version_names)
-                    stack_node = OpenRVStackHandler._create_stack(ext, source_groups, version_comparison)
-                    OpenRVStackHandler._create_layout(ext, source_groups, version_comparison)
+                    stack_node = OpenRVStackHandler._create_stack(ext, source_groups, version_comparison, product_name)
+                    OpenRVStackHandler._create_layout(ext, source_groups, version_comparison, product_name)
                     stack_nodes.append(stack_node)
             else:
                 OpenRVStackHandler._load_representation(contexts[0])
@@ -135,20 +140,20 @@ class OpenRVStackHandler:
         return source_groups, version_names
 
     @staticmethod
-    def _create_stack(ext, source_groups, version_comparison):
+    def _create_stack(ext, source_groups, version_comparison, product_name):
         """Create RV stack node"""
         stack_node = rv.commands.newNode("RVStackGroup")
         rv.commands.setNodeInputs(stack_node, source_groups)
-        rv.commands.setStringProperty(f"{stack_node}.ui.name", [f"{ext}_stack({version_comparison})"])
+        rv.commands.setStringProperty(f"{stack_node}.ui.name", [f"{product_name}_{ext}_stack({version_comparison})"])
         return stack_node
 
     @staticmethod
-    def _create_layout(ext, source_groups, version_comparison):
+    def _create_layout(ext, source_groups, version_comparison, product_name):
         """Create RV layout node"""
         layout_node = rv.commands.newNode("RVLayoutGroup")
         rv.commands.setNodeInputs(layout_node, source_groups)
         rv.commands.setStringProperty(f"{layout_node}.layout.mode", ["packed"])
-        rv.commands.setStringProperty(f"{layout_node}.ui.name", [f"{ext}_layout({version_comparison})"])
+        rv.commands.setStringProperty(f"{layout_node}.ui.name", [f"{product_name}_{ext}_layout({version_comparison})"])
         return layout_node
 
     @staticmethod

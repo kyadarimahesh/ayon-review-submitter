@@ -1,7 +1,7 @@
 [project]
 name = "ayon-review-submitter"
-version = "1.0.1"
-description = "Openrv addon for Ayon.\n"
+version = "0.0.1"
+description = "Review addon for Ayon.\n"
 readme = "README.md"
 requires-python = ">=3.11"
 
