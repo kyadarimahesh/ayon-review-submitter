@@ -1,5 +1,4 @@
 import os
-import re
 from collections import defaultdict
 from pathlib import Path
 from .settings_helper import get_product_filters
@@ -9,14 +8,17 @@ try:
 except ImportError:
     rv = None
 
+try:
+    from ayon_openrv.plugins.load.openrv.load_frames import FramesLoader
+    from ayon_openrv.plugins.load.openrv.load_mov import MovLoader
+except ImportError:
+    FramesLoader = None
+    MovLoader = None
+
 import ayon_api
 from ayon_api import get_task_by_id
 from ayon_core.pipeline.load import get_representation_path
-
-try:
-    from ayon_openrv.api.pipeline import imprint_container
-except ImportError:
-    imprint_container = None
+from ayon_core.lib.transcoding import VIDEO_EXTENSIONS, IMAGE_EXTENSIONS
 
 
 class OpenRVStackHandler:
@@ -59,7 +61,7 @@ class OpenRVStackHandler:
         # Auto-compare with last submission if same product
         product_filters = get_product_filters()
         auto_compare_types = product_filters.get("auto_compare_product_types", ["render", "prerender", "plate"])
-        
+
         if task_id and product_type in auto_compare_types:
             try:
                 task = get_task_by_id(project_name, task_id)
@@ -67,11 +69,12 @@ class OpenRVStackHandler:
 
                 if product_id in loaded_products:
                     last_version_id = loaded_products[product_id]["version_id"]
-                    
+
                     if last_version_id != version_id:
                         prev_repres = list(ayon_api.get_representations(project_name, version_ids=[last_version_id]))
                         repres.extend(prev_repres)
-                        print(f"Comparing {product_name} {version_name} with {loaded_products[product_id]['version_name']}")
+                        print(
+                            f"Comparing {product_name} {version_name} with {loaded_products[product_id]['version_name']}")
             except Exception as e:
                 print(f"Could not fetch last submission: {e}")
 
@@ -82,7 +85,7 @@ class OpenRVStackHandler:
             # Skip thumbnail representations
             if repre.get("name") == "thumbnail":
                 continue
-                
+
             repre_ctx = ctx.copy()
             repre_ctx["representation"] = repre
             repre_ctx["version"] = version_map.get(repre["versionId"])
@@ -118,22 +121,19 @@ class OpenRVStackHandler:
 
     @staticmethod
     def _load_sources(contexts):
-        """Load sources for stacking"""
+        """Load sources for stacking using standard loaders"""
         source_groups = []
         version_names = []
 
         for ctx in contexts:
             try:
-                filepath = get_representation_path(ctx["representation"])
-                load_path = OpenRVStackHandler._prepare_load_path(filepath)
-                nodes = rv.commands.addSourcesVerbose([[load_path]])
+                # Use standard loader for consistency
+                loaded_node = OpenRVStackHandler._load_representation(ctx)
 
-                if nodes:
-                    source_node = nodes[0]
-                    source_group = rv.commands.nodeGroup(source_node)
+                if loaded_node:
+                    source_group = rv.commands.nodeGroup(loaded_node)
                     source_groups.append(source_group)
                     version_names.append(ctx["version"]["name"])
-                    OpenRVStackHandler._store_version_metadata(source_node, ctx)
             except Exception as e:
                 print(f"Error loading {ctx.get('version', {}).get('name', 'unknown')}: {e}")
 
@@ -158,38 +158,23 @@ class OpenRVStackHandler:
 
     @staticmethod
     def _load_representation(context):
-        """Load single representation"""
+        """Load single representation using standard loaders"""
         filepath = get_representation_path(context["representation"])
-        load_path = OpenRVStackHandler._prepare_load_path(filepath)
-        loaded_node = rv.commands.addSourceVerbose([load_path])
+        ext = Path(filepath).suffix.lower().lstrip('.')
 
-        OpenRVStackHandler._store_version_metadata(loaded_node, context)
+        # Choose appropriate loader based on file extension
+        if ext in {e.lstrip('.') for e in VIDEO_EXTENSIONS} and MovLoader:
+            loader = MovLoader()
+        elif ext in {e.lstrip('.') for e in IMAGE_EXTENSIONS} and FramesLoader:
+            loader = FramesLoader()
 
-        if imprint_container:
-            imprint_container(
-                loaded_node,
-                name=os.path.basename(filepath),
-                namespace=context.get("folder", {}).get("name", "default"),
-                context=context,
-                loader="OpenRVStackHandler"
-            )
+        # Use loader to load representation
+        namespace = context.get("folder", {}).get("name", "default")
+        loader.load(context, name=os.path.basename(filepath), namespace=namespace, options=None)
 
-        return loaded_node
-
-    @staticmethod
-    def read_version_metadata_from_rv():
-        """Read version metadata from all sources in current RV session"""
-        if rv is None:
-            return {}
-
-        source_mapping = {}
-
-        for source in rv.commands.nodesOfType("RVSourceGroup"):
-            metadata = OpenRVStackHandler._read_source_metadata(source)
-            if metadata:
-                source_mapping[source] = metadata
-
-        return source_mapping
+        # Return the loaded source node
+        sources = rv.commands.sourcesAtFrame(rv.commands.frame())
+        return sources[-1] if sources else None
 
     @staticmethod
     def get_loaded_products_data(project_name):
@@ -222,63 +207,3 @@ class OpenRVStackHandler:
                 print(f"Error reading product data: {e}")
 
         return loaded_products
-
-    @staticmethod
-    def _read_source_metadata(source):
-        """Read metadata from a single source node"""
-        props = {
-            'version_id': f"{source}.ayon.version_id",
-            'representation_id': f"{source}.ayon.representation_id",
-            'path': f"{source}.ayon.file_path"
-        }
-
-        if not rv.commands.propertyExists(props['version_id']):
-            return None
-
-        return {
-            key: rv.commands.getStringProperty(prop)[0] if rv.commands.propertyExists(prop) else None
-            for key, prop in props.items()
-        }
-
-    @staticmethod
-    def _store_version_metadata(node, context):
-        """Store version metadata in RV source node"""
-        if rv is None:
-            return
-
-        metadata = {
-            'version_id': context.get("version", {}).get("id"),
-            'representation_id': context.get("representation", {}).get("id"),
-            'file_path': get_representation_path(context["representation"])
-        }
-
-        for key, value in metadata.items():
-            if value:
-                prop = f"{node}.ayon.{key}"
-                if not rv.commands.propertyExists(prop):
-                    rv.commands.newProperty(prop, rv.commands.StringType, 1)
-                rv.commands.setStringProperty(prop, [value], True)
-
-    @staticmethod
-    def _prepare_load_path(path):
-        """Prepare path for RV loading (handle image sequences)"""
-        ext = Path(path).suffix.lower()
-
-        if ext not in ['.exr', '.jpg', '.jpeg', '.png', '.tiff', '.dpx']:
-            return path
-
-        folder = os.path.dirname(path)
-        filename = os.path.basename(path)
-        match = re.match(r"^(.*?)(\d+)(\.[^.]+)$", filename)
-
-        if not match or not os.path.exists(folder):
-            return path
-
-        prefix, _, ext = match.groups()
-        pattern = rf"^{re.escape(prefix)}(\d+){re.escape(ext)}$"
-        frames = [int(m.group(1)) for f in os.listdir(folder) if (m := re.match(pattern, f))]
-
-        if frames:
-            return os.path.join(folder, f"{prefix}{min(frames)}-{max(frames)}#{ext}")
-
-        return path

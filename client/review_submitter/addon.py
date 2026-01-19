@@ -13,8 +13,21 @@ class ReviewSubmitterAddon(AYONAddon, IHostAddon, IPluginPaths):
     host_name = "reviewsubmitter"
     version = __version__
 
+    def initialize(self, settings):
+        """Initialize addon with settings."""
+        pass
+
+    def connect_with_addons(self, enabled_addons):
+        """Connect with other addons."""
+        pass
+
     def get_plugin_paths(self):
-        return {}
+        """Return publish plugin paths for OpenRV."""
+        return {
+            "publish": [
+                os.path.join(REVIEW_SUBMITTER_ROOT_DIR, "plugins", "publish")
+            ]
+        }
 
     def get_load_plugin_paths(self, host_name):
         """Return loader plugin paths only for OpenRV host."""

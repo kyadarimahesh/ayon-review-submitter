@@ -1,5 +1,4 @@
 import os
-import re
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -76,10 +75,10 @@ class ReviewSubmissionDialog(QtWidgets.QDialog):
         self.submission_type_combo = QtWidgets.QComboBox()
         submission_settings = get_submission_settings()
         submission_types = submission_settings.get("submission_types", ["WIP", "FINAL", "PACKAGE"])
-        
+
         print(f"[DIALOG] Submission settings: {submission_settings}")
         print(f"[DIALOG] Submission types to add: {submission_types}")
-        
+
         self.submission_type_combo.addItems(submission_types)
 
         self.priority_checkbox = QtWidgets.QCheckBox("High Priority")
@@ -118,71 +117,7 @@ class ReviewSubmissionDialog(QtWidgets.QDialog):
 
 
 class ReviewSubmissionHandler:
-    """Handler for automated publish and review submission workflow"""
-
-    @staticmethod
-    def trigger_publish_and_review(parent):
-        """Trigger publish button click programmatically"""
-        try:
-            publisher_window = None
-            for widget in QtWidgets.QApplication.topLevelWidgets():
-                if hasattr(widget, 'objectName') and widget.objectName() == "PublishWindow":
-                    publisher_window = widget
-                    break
-
-            if publisher_window and hasattr(publisher_window, '_publish_btn'):
-                publish_btn = publisher_window._publish_btn
-                if publish_btn and publish_btn.isEnabled():
-                    publish_btn.click()
-                    QtCore.QTimer.singleShot(3000, lambda: ReviewSubmissionHandler._show_review_dialog(parent,
-                                                                                                       publisher_window))
-                else:
-                    print("Publish button not enabled or not found")
-            else:
-                print("Publisher window not found or missing _publish_btn attribute")
-        except Exception as e:
-            print(f"Failed to trigger publish: {e}")
-
-    @staticmethod
-    def _show_review_dialog(parent, publisher_window):
-        """Show review dialog after publish"""
-        if publisher_window:
-            publisher_window.close()
-
-        dialog = ReviewSubmissionDialog(parent=parent)
-        if dialog.exec_() == QtWidgets.QDialog.Accepted:
-            review_data = dialog.get_review_data()
-            version_id = ReviewSubmissionHandler._get_published_version_id(publisher_window)
-            if version_id:
-                ReviewSubmissionHandler._create_version_activity(version_id, review_data)
-            else:
-                print("No published version found to create review comment")
-
-    @staticmethod
-    def _get_published_version_id(publisher_window):
-        """Extract version ID from publish report"""
-        if not publisher_window or not hasattr(publisher_window, '_controller'):
-            return None
-
-        controller = publisher_window._controller
-        report = controller.get_publish_report()
-
-        if not report or "plugins_data" not in report:
-            return None
-
-        for plugin_data in report["plugins_data"]:
-            if plugin_data.get("name") == "IntegrateAsset":
-                instances_data = plugin_data.get("instances_data", [])
-                for instance_data in instances_data:
-                    logs = instance_data.get("logs", [])
-                    for log in logs:
-                        msg = log.get("msg", "")
-                        if "'versionId':" in msg:
-                            match = re.search(r"'versionId':\s*'([^']+)'", msg)
-                            if match:
-                                return match.group(1)
-
-        return None
+    """Handler for review submission workflow"""
 
     @staticmethod
     def _extract_first_frame_from_rv():
@@ -281,11 +216,11 @@ class ReviewSubmissionHandler:
                 tasks = list(get_tasks(project_name, folder_ids=[folder["id"]], task_names=[task_name]))
                 if tasks:
                     task_id = tasks[0]["id"]
-                    
+
                     # Get loaded products from RV
                     from review_submitter.handlers import OpenRVStackHandler
                     loaded_products = OpenRVStackHandler.get_loaded_products_data(project_name)
-                    
+
                     submission_data = {
                         "submission_type": review_data["submission_type"],
                         "reviewer_name": reviewer,
@@ -294,7 +229,7 @@ class ReviewSubmissionHandler:
                         "submitted_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         "loaded_products": loaded_products
                     }
-                    
+
                     task = get_task_by_id(project_name, task_id)
                     task_data = task.get("data", {})
                     task_data["submission_data"] = submission_data
@@ -310,7 +245,7 @@ class ReviewSubmissionHandler:
     def collect_review_inputs(parent, is_resubmission=False):
         """Collect review inputs - plates/renders based on submission type"""
         product_filters = get_product_filters()
-        
+
         if is_resubmission:
             filters = product_filters.get("review_target_product_types", ["render"])
         else:
@@ -343,7 +278,6 @@ class ReviewSubmissionHandler:
                     tasks = get_tasks(project_name, folder_ids=[folder_id], task_names=task_names)
                     task_ids = [task["id"] for task in tasks] if tasks else []
                     task_ids.append("--no-task--")
-
 
                     def select_tasks():
                         from ayon_core.tools.utils.tasks_widget import ITEM_ID_ROLE
